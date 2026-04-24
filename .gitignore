@@ -1,7 +1,6 @@
 # Node
 node/node_modules/
 node/dist/
-node/bun.lock
 
 # Python
 python/.venv/
