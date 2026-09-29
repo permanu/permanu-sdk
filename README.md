@@ -10,22 +10,24 @@ Permanu already captures ingress, container lifecycle, and deploy spans with zer
 
 ## How it works
 
-Every Permanu deploy host runs a local `pagent` process that accepts OTLP/gRPC on `127.0.0.1:4317`. The SDK configures OpenTelemetry to export there. Spans never leave the host via the SDK — they flow through `pagent` to Permanu's collector over the secure control plane.
+The runner injects the host-local OTLP receiver as `http://permanu-otel:4318` into application containers. The SDK exports HTTP protobuf traces to that endpoint and attaches the project, environment, service and deployment identities.
 
-Two environment variables are injected by Permanu at deploy time:
+These standard environment variables are injected by Permanu at deploy time:
 
 | Variable | Purpose |
 |---|---|
-| `PERMANU_SERVICE_NAME` | Sets `service.name` on all spans |
-| `PERMANU_DEPLOYMENT_ID` | Sets `permanu.deployment_id` attribute |
+| `OTEL_SERVICE_NAME` | Sets `service.name` on all spans |
+| `OTEL_RESOURCE_ATTRIBUTES` | Percent-encoded project, environment, service and deployment attributes |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base receiver URL; HTTP traces append `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
 
-**When these are unset** (local dev, CI, tests), every SDK silently no-ops. Leave the init call in place — it does nothing outside Permanu.
+Without `OTEL_SERVICE_NAME` or legacy `PERMANU_SERVICE_NAME`, initialization leaves the existing tracer provider unchanged. Legacy host applications using `PERMANU_SERVICE_NAME` and `PERMANU_DEPLOYMENT_ID` retain the loopback gRPC default. Standard service names take precedence.
 
 ---
 
 ## Go
 
-**Requirements:** Go 1.22+
+**Requirements:** Go 1.24+
 
 ```go
 import permanu "github.com/permanu/permanu-sdk-go"
@@ -143,11 +145,9 @@ All OTel semantic conventions apply. Permanu surfaces standard attributes (HTTP 
 
 ## Transport
 
-- **Endpoint:** `127.0.0.1:4317` (loopback only, never external)
-- **Protocol:** OTLP/gRPC, plaintext (loopback — TLS is not needed)
-- **Batching:** default OTel batch settings; safe to leave as-is
+Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` override their generic counterparts. A signal-specific HTTP URL is used as given; a generic HTTP URL appends `/v1/traces`. Explicit `grpc` remains supported. Unsupported protocols or invalid endpoints leave tracing unchanged.
 
-No data leaves the host via this SDK. No secrets. No version telemetry.
+Initialization creates one provider per process. Shutdown is idempotent and waits at most five seconds; individual exports use a three-second timeout. Attribute parsing retains at most 64 entries from at most 64 KiB, decodes percent escapes, and skips malformed entries. Applications configuring their own endpoint are responsible for that destination.
 
 ---
 
